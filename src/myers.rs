@@ -2,6 +2,8 @@ use crate::preprocess::PreprocessingOptions;
 use bva::{Bit, BitVector, Bvd};
 use std::collections::HashMap;
 
+/// The outcome of aligning a pattern against a text: the edit cost and where in
+/// the text the best alignment begins.
 pub struct AlignmentResult {
     pos_start_t: usize,
     score: usize,
@@ -9,10 +11,12 @@ pub struct AlignmentResult {
 }
 
 impl AlignmentResult {
+    /// Edit distance of this alignment (lower is a closer match).
     pub fn score(&self) -> usize {
         self.score
     }
 
+    /// Character index in the (longer) text where the matched region begins.
     pub fn pos_start_t(&self) -> usize {
         self.pos_start_t
     }
@@ -23,6 +27,12 @@ impl AlignmentResult {
     }
 }
 
+/// Find every alignment of the shorter string against the longer one whose edit
+/// distance is at most `max_score`.
+///
+/// Each text position that ends a sufficiently-close match of the pattern yields
+/// one [`AlignmentResult`]. Pass `max_score == usize::MAX` to keep them all. The
+/// returned vector is in ascending order of text position, not score.
 pub fn get_all_alignments(
     str1_og: String,
     str2_og: String,
@@ -202,6 +212,11 @@ fn _get_all_alignments_extended(
     alignments
 }
 
+/// Compute the full (end-to-end) Levenshtein distance between the two strings.
+///
+/// Unlike [`get_levenshtein_distance_partial`], the whole pattern is aligned
+/// against the whole text. The distance is available via
+/// [`AlignmentResult::score`].
 pub fn get_levenshtein_distance(
     str1_og: String,
     str2_og: String,
@@ -214,6 +229,11 @@ pub fn get_levenshtein_distance(
         .unwrap()
 }
 
+/// Find the best partial (substring) match: the lowest edit distance between the
+/// shorter string and any aligned window of the longer one.
+///
+/// This is the basis of the `partial_*` ratios — it rewards the pattern occurring
+/// inside the text without penalizing the surrounding characters.
 pub fn get_levenshtein_distance_partial(
     str1_og: String,
     str2_og: String,
@@ -226,6 +246,19 @@ pub fn get_levenshtein_distance_partial(
     all_alignments.into_iter().next().unwrap()
 }
 
+/// Return the single best alignment of the shorter string within the longer one
+/// — the lowest-scoring [`AlignmentResult`], including where the match starts.
+///
+/// # Example
+///
+/// ```
+/// use fuzzengine::{myers::get_best_alignment, PreprocessingOptions};
+///
+/// let opts = PreprocessingOptions::default();
+/// let r = get_best_alignment("cat".to_string(), "concatenate".to_string(), &opts);
+/// assert_eq!(r.score(), 0); // exact substring
+/// assert_eq!(r.pos_start_t(), 3); // "cat" starts at index 3
+/// ```
 pub fn get_best_alignment(
     str1_og: String,
     str2_og: String,

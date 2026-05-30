@@ -76,7 +76,19 @@ dispatch is automatic.
 
 [`bva`]: https://crates.io/crates/bva
 
+## Testing
 
+The crate has **over 98% line coverage**. Beyond example-based unit tests, the
+suite cross-checks the bit-parallel algorithms against an independent
+dynamic-programming oracle, asserts that the `u64` fast path and the long-string
+fallback produce identical results, and runs every documentation example as a
+doctest.
+
+Run the tests with:
+
+```sh
+cargo test
+```
 
 ## License
 

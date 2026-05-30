@@ -1,6 +1,56 @@
+//! Fast fuzzy string matching built on bit-parallel edit-distance algorithms,
+//! with a RapidFuzz/FuzzyWuzzy-style ratio API.
+//!
+//! # Overview
+//!
+//! The crate exposes three layers:
+//!
+//! - [`ratios`] — similarity scores in `0.0..=1.0`: [`ratio`], [`partial_ratio`],
+//!   and the `token_*` variants, plus the [`get_best_option`] helpers for picking
+//!   the closest candidate from a list.
+//! - [`hyyro`] — Hyyrö 2003 bit-parallel global Levenshtein distance
+//!   ([`get_edit_distance`]).
+//! - [`myers`] — Myers 1999 bit-parallel approximate search ([`myers::get_best_alignment`]
+//!   and friends), used by the `partial_*` ratios.
+//!
+//! Every comparison takes a [`PreprocessingOptions`], which controls optional
+//! non-ASCII folding and whitespace stripping. Use [`PreprocessingOptions::default`]
+//! for the common case.
+//!
+//! # Example
+//!
+//! ```
+//! use fuzzengine::{ratio, get_best_option, PreprocessingOptions};
+//!
+//! let opts = PreprocessingOptions::default();
+//!
+//! // Similarity score between two strings.
+//! assert_eq!(ratio("hello", "hella", &opts), 0.9);
+//!
+//! // Pick the closest candidate from a list.
+//! let best = get_best_option(
+//!     "cat",
+//!     vec!["dog".to_string(), "cat".to_string(), "bird".to_string()],
+//!     &opts,
+//! );
+//! assert_eq!(best, Some(("cat".to_string(), 1.0)));
+//! ```
+//!
+//! # String length
+//!
+//! The algorithms pack the shorter input into a single `u64` for speed, and fall
+//! back automatically to a heap-allocated bit vector for patterns longer than 64
+//! characters, so there is no length limit.
+
+#![warn(missing_docs)]
+
+/// Bit-parallel global Levenshtein edit distance (Hyyrö 2003).
 pub mod hyyro;
+/// Bit-parallel approximate substring search and alignment (Myers 1999).
 pub mod myers;
+/// Input normalization options and token-rearranging helpers.
 pub mod preprocess;
+/// Similarity ratios (`0.0..=1.0`) and best-match helpers.
 pub mod ratios;
 
 pub use hyyro::get_edit_distance;

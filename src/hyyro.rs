@@ -3,6 +3,25 @@ use std::collections::HashMap;
 
 use crate::preprocess::PreprocessingOptions;
 
+/// Compute the Levenshtein (edit) distance between two strings.
+///
+/// Returns the minimum number of single-character insertions, deletions, and
+/// substitutions needed to turn one string into the other, after applying
+/// `preprocessing_options` to both. The result is symmetric in the arguments.
+///
+/// This uses Hyyrö's 2003 bit-parallel algorithm: a `u64` fast path for inputs
+/// whose shorter side is at most 64 characters, with an automatic heap-backed
+/// fallback for longer ones.
+///
+/// # Example
+///
+/// ```
+/// use fuzzengine::{get_edit_distance, PreprocessingOptions};
+///
+/// let opts = PreprocessingOptions::default();
+/// assert_eq!(get_edit_distance("kitten".to_string(), "sitting".to_string(), &opts), 3);
+/// assert_eq!(get_edit_distance("abc".to_string(), "abc".to_string(), &opts), 0);
+/// ```
 pub fn get_edit_distance(
     str1_og: String,
     str2_og: String,
