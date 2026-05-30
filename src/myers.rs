@@ -1,4 +1,5 @@
 use crate::preprocess::PreprocessingOptions;
+use bva::{Bit, BitVector, Bvd};
 use std::collections::HashMap;
 
 pub struct AlignmentResult {
@@ -70,6 +71,12 @@ fn _get_all_alignments(
         }];
     }
 
+    // The fast path packs the pattern into a single u64, so it only handles
+    // patterns up to 64 characters. Longer patterns use the Bvd-backed version.
+    if m > 64 {
+        return _get_all_alignments_extended(str1, str2, max_score, match_full);
+    }
+
     let mut peq: HashMap<char, u64> = HashMap::new();
     for ch in str1.chars().chain(str2.chars()) {
         peq.insert(ch, 0u64);
@@ -101,6 +108,88 @@ fn _get_all_alignments(
         mh <<= 1;
         pv = mh | !(xv | ph);
         mv = ph & xv;
+
+        if score <= max_score && (!match_full || (j == n - 1 && match_full)) {
+            alignments.push(AlignmentResult {
+                pos_start_t: (j + 1).saturating_sub(m),
+                score,
+                len_sum: m + n,
+            });
+        }
+    }
+    alignments
+}
+
+fn _get_all_alignments_extended(
+    str1_preprocessed: String,
+    str2_preprocessed: String,
+    max_score: usize,
+    match_full: bool,
+) -> Vec<AlignmentResult> {
+    // Myers 1999 algo - this version supports t > usize in length
+    // setup
+    let (p, t) = if str1_preprocessed.len() > str2_preprocessed.len() {
+        (
+            str2_preprocessed.chars().collect::<Vec<char>>(),
+            str1_preprocessed.chars().collect::<Vec<char>>(),
+        )
+    } else {
+        (
+            str1_preprocessed.chars().collect::<Vec<char>>(),
+            str2_preprocessed.chars().collect::<Vec<char>>(),
+        )
+    };
+    let (m, n) = (p.len(), t.len());
+
+    if m == n && m == 0 {
+        return vec![AlignmentResult {
+            pos_start_t: 0,
+            score: 0,
+            len_sum: 0,
+        }];
+    }
+
+    if m == 0 || n == 0 {
+        return vec![AlignmentResult {
+            pos_start_t: 0,
+            score: n,
+            len_sum: m + n,
+        }];
+    }
+
+    let mut peq: HashMap<char, Bvd> = HashMap::new();
+    for ch in str1_preprocessed.chars().chain(str2_preprocessed.chars()) {
+        peq.insert(ch, Bvd::zeros(m));
+    }
+    for i in 0..m {
+        peq.get_mut(&p[i]).unwrap().set(i, Bit::One);
+    }
+    let mut pv = Bvd::ones(m);
+    let mut mv = Bvd::zeros(m);
+    let mut score = m;
+
+    let mut alignments = Vec::new();
+
+    // search
+    for j in 0..n {
+        let eq = &peq[&t[j]];
+        let xv = eq | &mv;
+        let eq_and_pv = eq & &pv;
+        let sum = &pv + &eq_and_pv;
+        let xh = &(&sum ^ &pv) | eq;
+        let mut ph = &mv | &!(&xh | &pv);
+        let mut mh = &pv & &xh;
+
+        if ph.get(m - 1) == Bit::One {
+            score += 1;
+        } else if mh.get(m - 1) == Bit::One {
+            score -= 1;
+        }
+
+        ph <<= 1u8;
+        mh <<= 1u8;
+        pv = &mh | &!(&xv | &ph);
+        mv = &ph & &xv;
 
         if score <= max_score && (!match_full || (j == n - 1 && match_full)) {
             alignments.push(AlignmentResult {
@@ -253,5 +342,109 @@ mod tests {
         let r = get_best_alignment("con".to_string(), "concatenate".to_string(), &opts());
         assert_eq!(r.score, 0);
         assert_eq!(r.pos_start_t, 0);
+    }
+
+    #[test]
+    fn long_identical_pattern_score_zero() {
+        // A 100-char pattern (> 64) routes through the Bvd-backed path.
+        let s: String = "abcdefghij".repeat(10); // 100 chars
+        assert_eq!(score(&s, &s), 0);
+    }
+
+    #[test]
+    fn long_pattern_exact_substring_score_zero() {
+        // 70-char pattern (> 64) found verbatim inside a longer text.
+        let pattern: String = "abcdefghij".repeat(7); // 70 chars
+        let text = format!("xyz{pattern}xyz");
+        assert_eq!(score(&pattern, &text), 0);
+    }
+
+    /// Assert the u64 fast path and the Bvd extended path produce identical
+    /// alignment vectors for the same input. Only meaningful when the pattern
+    /// (shorter side) is <= 64 chars, otherwise `_get_all_alignments` would
+    /// itself delegate to the extended path and the comparison would be trivial.
+    fn assert_paths_match(a: &str, b: &str, max_score: usize, match_full: bool) {
+        assert!(
+            a.chars().count().min(b.chars().count()) <= 64,
+            "test input pattern must be <= 64 chars to exercise the u64 path"
+        );
+        let fast =
+            _get_all_alignments(a.to_string(), b.to_string(), max_score, match_full, &opts());
+        // The extended fn expects already-preprocessed strings (no opts arg).
+        let (pa, pb) = opts().process(a.to_string(), b.to_string());
+        let ext = _get_all_alignments_extended(pa, pb, max_score, match_full);
+
+        assert_eq!(
+            fast.len(),
+            ext.len(),
+            "alignment count differs for ({a:?}, {b:?}) max_score={max_score} match_full={match_full}"
+        );
+        for (i, (f, e)) in fast.iter().zip(ext.iter()).enumerate() {
+            assert_eq!(
+                (f.score, f.pos_start_t, f.len_sum),
+                (e.score, e.pos_start_t, e.len_sum),
+                "alignment #{i} differs for ({a:?}, {b:?}) max_score={max_score} match_full={match_full}"
+            );
+        }
+    }
+
+    /// A spread of inputs covering identical strings, substrings, edits at every
+    /// position, repeats, digits, the empty cases, and a 64-char boundary pattern.
+    fn parity_cases() -> Vec<(String, String)> {
+        let boundary: String = "abcdefgh".repeat(8); // exactly 64 chars (u64 path)
+        vec![
+            ("hello".into(), "hello".into()),
+            ("".into(), "".into()),
+            ("".into(), "abcde".into()),
+            ("abcde".into(), "".into()),
+            ("cat".into(), "concatenate".into()),
+            ("con".into(), "concatenate".into()),
+            ("nate".into(), "concatenate".into()),
+            ("abcde".into(), "abxde".into()),
+            ("abd".into(), "abcd".into()),
+            ("abc".into(), "abxc".into()),
+            ("abc".into(), "xbx".into()),
+            ("abc".into(), "xyz".into()),
+            ("a1c".into(), "xa1cy".into()),
+            ("banana".into(), "ananas".into()),
+            ("aaaa".into(), "aabaa".into()),
+            ("kitten".into(), "sitting".into()),
+            ("levenshtein".into(), "distance".into()),
+            (boundary.clone(), format!("zz{boundary}zz")),
+            (boundary.clone(), boundary),
+        ]
+    }
+
+    #[test]
+    fn paths_match_default() {
+        for (a, b) in parity_cases() {
+            assert_paths_match(&a, &b, usize::MAX, false);
+        }
+    }
+
+    #[test]
+    fn paths_match_match_full() {
+        // match_full=true keeps only the alignment of the whole text (Levenshtein).
+        for (a, b) in parity_cases() {
+            assert_paths_match(&a, &b, usize::MAX, true);
+        }
+    }
+
+    #[test]
+    fn paths_match_under_max_score() {
+        // Exercise the `score <= max_score` filter identically on both paths.
+        for max_score in [0usize, 1, 2, 3] {
+            for (a, b) in parity_cases() {
+                assert_paths_match(&a, &b, max_score, false);
+            }
+        }
+    }
+
+    #[test]
+    fn paths_match_argument_order_swapped() {
+        // The internal shorter/longer swap must land both paths in the same place.
+        for (a, b) in parity_cases() {
+            assert_paths_match(&b, &a, usize::MAX, false);
+        }
     }
 }

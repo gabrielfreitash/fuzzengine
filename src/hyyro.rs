@@ -1,3 +1,4 @@
+use bva::{Bit, BitVector, Bvd};
 use std::collections::HashMap;
 
 use crate::preprocess::PreprocessingOptions;
@@ -25,6 +26,10 @@ pub fn get_edit_distance(
 
     if m == 0 {
         return n;
+    }
+
+    if m > 64 {
+        return _get_edit_distance_extended(str1, str2);
     }
 
     let mut peq: HashMap<char, u64> = HashMap::new();
@@ -59,6 +64,65 @@ pub fn get_edit_distance(
         let hp_shifted = (hp << 1) | 1;
         pv = (mh << 1) | !(d0 | hp_shifted);
         mv = d0 & hp_shifted;
+
+        mv_last = mv;
+        pv_last = pv;
+    }
+    dmj
+}
+
+fn _get_edit_distance_extended(str1_preprocessed: String, str2_preprocessed: String) -> usize {
+    // Hyyro's 2003 algo
+    // setup
+    let (p, t) = if str1_preprocessed.len() > str2_preprocessed.len() {
+        (
+            str2_preprocessed.chars().collect::<Vec<char>>(),
+            str1_preprocessed.chars().collect::<Vec<char>>(),
+        )
+    } else {
+        (
+            str1_preprocessed.chars().collect::<Vec<char>>(),
+            str2_preprocessed.chars().collect::<Vec<char>>(),
+        )
+    };
+    let (m, n) = (p.len(), t.len());
+
+    if m == 0 {
+        return n;
+    }
+
+    let mut peq: HashMap<char, Bvd> = HashMap::new();
+    for ch in str1_preprocessed.chars().chain(str2_preprocessed.chars()) {
+        peq.insert(ch, Bvd::zeros(n));
+    }
+    for i in 0..m {
+        peq.get_mut(&p[i]).unwrap().set(i, Bit::One);
+    }
+    let mut pv;
+    let mut mv;
+
+    let mut pv_last = Bvd::ones(m);
+    let mut mv_last = Bvd::zeros(m);
+
+    // calc
+    let mut dmj = m;
+    for j in 0..n {
+        let pmj = &peq[&t[j]];
+        let d0 = (((pmj & &pv_last) + (&pv_last)) ^ &pv_last) | pmj | &mv_last;
+        let hp = &mv_last | !(&d0 | &pv_last);
+        let mh = &d0 & pv_last;
+
+        if hp.get(m - 1) == Bit::One {
+            dmj = dmj + 1
+        }
+
+        if mh.get(m - 1) == Bit::One {
+            dmj = dmj - 1
+        }
+
+        let hp_shifted = (hp << 1u8) | 1u8;
+        pv = (mh << 1u8) | !(&d0 | &hp_shifted);
+        mv = &d0 & &hp_shifted;
 
         mv_last = mv;
         pv_last = pv;
@@ -238,5 +302,87 @@ mod tests {
             bytes[59] = b'Z';
         }
         assert_eq!(dist(&base, &mutated), dp_levenshtein(&base, &mutated));
+    }
+
+    /// Assert the u64 fast path and the Bvd extended path return the same
+    /// distance for the same input. Only meaningful when the pattern (shorter
+    /// side) is <= 64 chars; otherwise `get_edit_distance` would itself delegate
+    /// to the extended path and the comparison would be trivial.
+    fn assert_paths_match(a: &str, b: &str) {
+        assert!(
+            a.chars().count().min(b.chars().count()) <= 64,
+            "test input pattern must be <= 64 chars to exercise the u64 path"
+        );
+        let fast = get_edit_distance(a.to_string(), b.to_string(), &opts());
+        // The extended fn expects already-preprocessed strings (no opts arg).
+        let (pa, pb) = opts().process(a.to_string(), b.to_string());
+        let ext = _get_edit_distance_extended(pa, pb);
+        assert_eq!(fast, ext, "u64 vs extended mismatch for ({a:?}, {b:?})");
+    }
+
+    #[test]
+    fn paths_match_u64_vs_extended() {
+        // For patterns <= 64 chars the two implementations must agree exactly.
+        let words = [
+            "", "a", "ab", "abc", "abcd", "cat", "concatenate", "kitten", "sitting",
+            "saturday", "sunday", "flaw", "lawn", "banana", "ananas", "aaaa", "aaab",
+            "xyzzy", "levenshtein", "distance",
+        ];
+        for a in words {
+            for b in words {
+                assert_paths_match(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn paths_match_at_64_boundary() {
+        // A pattern of exactly 64 chars still runs the u64 path; the extended
+        // path must agree with it.
+        let boundary: String = "abcdefgh".repeat(8); // 64 chars
+        let mut mutated = boundary.clone();
+        unsafe {
+            let bytes = mutated.as_bytes_mut();
+            bytes[0] = b'Z';
+            bytes[63] = b'Z';
+        }
+        assert_paths_match(&boundary, &boundary);
+        assert_paths_match(&boundary, &mutated);
+        assert_paths_match(&boundary, &format!("{boundary}tail"));
+    }
+
+    #[test]
+    fn extended_matches_dp_oracle_for_long_patterns() {
+        // Patterns > 64 chars route through the Bvd path. Compare against the
+        // independent DP oracle across several lengths and edit patterns.
+        for &len in &[65usize, 70, 80, 100, 150] {
+            let a: String = "abcdefghijklmnopqrstuvwxyz".chars().cycle().take(len).collect();
+
+            // identical
+            assert_eq!(dist(&a, &a), 0, "identical len={len}");
+
+            // a few substitutions to characters outside the alphabet
+            let mut b = a.clone();
+            unsafe {
+                let by = b.as_bytes_mut();
+                by[3] = b'0';
+                by[len / 2] = b'1';
+                by[len - 1] = b'2';
+            }
+            assert_eq!(dist(&a, &b), dp_levenshtein(&a, &b), "substitutions len={len}");
+
+            // insertion (longer counterpart)
+            let c = format!("{a}tail");
+            assert_eq!(dist(&a, &c), dp_levenshtein(&a, &c), "insertion len={len}");
+
+            // deletion (drop a middle chunk)
+            let d: String = a
+                .chars()
+                .enumerate()
+                .filter(|(i, _)| !(len / 3..len / 3 + 5).contains(i))
+                .map(|(_, ch)| ch)
+                .collect();
+            assert_eq!(dist(&a, &d), dp_levenshtein(&a, &d), "deletion len={len}");
+        }
     }
 }

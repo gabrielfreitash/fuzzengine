@@ -9,8 +9,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90c6333e01ba7235575b6ab53e5af10f1c327927fd97c36462917e289557ea64"
 
 [[package]]
+name = "bva"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "872eec346fdfb08914bf4c59e3b4e678f7442b606033e00bab71e3661d0734c9"
+
+[[package]]
 name = "fuzzengine"
 version = "0.1.0"
 dependencies = [
  "any_ascii",
+ "bva",
 ]

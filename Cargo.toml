@@ -13,3 +13,4 @@ authors = ["Gabriel Hardeman <gabriel.hardeman@gmail.com>"]
 
 [dependencies]
 any_ascii = "0.3.3"
+bva = "0.4.1"
