@@ -1,0 +1,13 @@
+[package]
+name = "fuzzengine"
+version = "0.1.0"
+edition = "2024"
+description = "Fast fuzzy string matching with bit-parallel edit-distance algorithms (Myers, Hyyrö) and RapidFuzz(fuzzywuzzy)-style ratios."
+license = "MIT"
+readme = "README.md"
+keywords = ["fuzzy", "string", "levenshtein", "matching", "similarity"]
+categories = ["text-processing", "algorithms"]
+authors = ["Gabriel Hardeman <gabriel.hardeman@gmail.com>"]
+
+[dependencies]
+any_ascii = "0.3.3"
