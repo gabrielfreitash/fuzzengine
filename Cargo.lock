@@ -16,7 +16,7 @@ checksum = "872eec346fdfb08914bf4c59e3b4e678f7442b606033e00bab71e3661d0734c9"
 
 [[package]]
 name = "fuzzengine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "any_ascii",
  "bva",

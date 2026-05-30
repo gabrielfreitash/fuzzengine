@@ -3,12 +3,19 @@
 Fast fuzzy string matching in Rust, built on bit-parallel edit-distance
 algorithms with a RapidFuzz/FuzzyWuzzy-style ratio API.
 
+## Authorship
+
+The library implementation — the algorithms and the public API — is **written by
+hand and is not AI-generated**. The test suite and the documentation (this
+README and the in-source doc comments) were produced with AI assistance.
+
 ## Features
 
-- **Bit-parallel edit distance** — Hyyrö 2003 global Levenshtein distance over a
-  64-bit word.
+- **Bit-parallel edit distance** — Hyyrö 2003 global Levenshtein distance.
 - **Approximate search** — Myers 1999 bit-parallel alignment for finding the best
   matching substring (`partial_*` ratios).
+- **No length limit** — a `u64` fast path for patterns up to 64 characters, with
+  an automatic heap-backed fallback (via [`bva`]) for longer ones.
 - **Ratios** — `ratio`, `partial_ratio`, and the `token_sort` / `token_set` /
   `token_sort_set` variants, each returning a similarity score in `0.0..=1.0`.
 - **Preprocessing** — optional non-ASCII folding (via [`any_ascii`]) and
@@ -58,11 +65,18 @@ assert_eq!(token_sort_ratio("new york mets", "mets new york", &opts), 1.0);
 assert_eq!(token_set_ratio("apple apple banana", "apple banana banana", &opts), 1.0);
 ```
 
-## Limitations
+## Strings of any length
 
-The bit-parallel core uses a single `u64`, so inputs are compared over their
-first 64 characters (after preprocessing). Longer strings are not yet handled by
-a blocked/multi-word implementation.
+The bit-parallel core packs the pattern (the shorter of the two inputs) into a
+single `u64`, which keeps the common case fast. When the pattern exceeds 64
+characters, the algorithms transparently fall back to a heap-allocated bit
+vector (via [`bva`]), so there is **no length limit** — only a modest speed
+difference between the two paths. Callers don't need to do anything; the
+dispatch is automatic.
+
+[`bva`]: https://crates.io/crates/bva
+
+
 
 ## License
 
